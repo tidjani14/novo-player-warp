@@ -35,6 +35,53 @@ BASE_DIR="$WORK/base/NOVO_PLAYER_v3.8(40)_base_src"
   echo "The ZIP does not look like the supplied apktool-decoded source" >&2; exit 2;
 }
 
+# This source export came from a tool that writes apktool.json; Apktool CLI
+# requires apktool.yml. Convert the metadata before invoking Apktool.
+if [[ ! -f "$BASE_DIR/apktool.yml" ]]; then
+  python3 - "$BASE_DIR/apktool.json" "$BASE_DIR/apktool.yml" <<'PYMETA'
+import json, sys
+from pathlib import Path
+
+source, destination = map(Path, sys.argv[1:3])
+if not source.is_file():
+    raise SystemExit(f"Neither apktool.yml nor apktool.json exists under {source.parent}")
+meta = json.loads(source.read_text(encoding="utf-8"))
+q = lambda value: json.dumps(str(value), ensure_ascii=False)
+lines = ["!!brut.androlib.meta.MetaInfo"]
+def scalar(name, value):
+    lines.append(f"{name}: {json.dumps(value, ensure_ascii=False) if isinstance(value, bool) else q(value)}")
+scalar("apkFileName", meta.get("apkFileName", "NOVO_PLAYER.apk"))
+scalar("compressionType", meta.get("compressionType", False))
+lines.append("doNotCompress:")
+for value in meta.get("doNotCompress", []):
+    lines.append(f"- {q(value)}")
+lines.append(f"isFrameworkApk: {str(bool(meta.get('isFrameworkApk', False))).lower()}")
+pkg = meta.get("PackageInfo", {})
+lines.extend(["packageInfo:", f"  forcedPackageId: {q(pkg.get('forcedPackageId', '127'))}",
+              f"  renameManifestPackage: {('null' if pkg.get('renameManifestPackage') is None else q(pkg.get('renameManifestPackage')))}"])
+sdk = meta.get("sdkInfo", {})
+lines.extend(["sdkInfo:", f"  minSdkVersion: {q(sdk.get('minSdkVersion', '21'))}",
+              f"  targetSdkVersion: {q(sdk.get('targetSdkVersion', '33'))}"])
+lines.append(f"sharedLibrary: {str(bool(meta.get('sharedLibrary', False))).lower()}")
+lines.append(f"sparseResources: {str(bool(meta.get('sparseResources', False))).lower()}")
+lines.append("unknownFiles:")
+for key, value in sorted(meta.get("unknownFiles", {}).items()):
+    lines.append(f"  {q(key)}: {q(value)}")
+framework = meta.get("UsesFramework", {})
+lines.append("usesFramework:")
+lines.append("  ids:")
+for value in framework.get("ids", [1]):
+    lines.append(f"  - {value}")
+tag = framework.get("tag")
+lines.append(f"  tag: {('null' if tag is None else q(tag))}")
+lines.append(f"version: {q('2.11.1')}")
+version = meta.get("VersionInfo", {})
+lines.extend(["versionInfo:", f"  versionCode: {q(version.get('versionCode', '1'))}",
+              f"  versionName: {q(version.get('versionName', '1.0'))}"])
+destination.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PYMETA
+fi
+
 # Compile the new Activity/controller and fetch the official embeddable tunnel AAR.
 gradle --no-daemon -p "$ROOT/warp-addon" :app:assembleDebug \
   -PwireguardVersion="$WIREGUARD_VERSION"
