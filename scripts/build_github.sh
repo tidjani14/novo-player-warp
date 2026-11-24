@@ -27,6 +27,20 @@ for tool in zipalign apksigner; do
   [[ -x "$BT/$tool" ]] || { echo "Missing Android build tool: $BT/$tool" >&2; exit 2; }
 done
 
+# Catch malformed inline Python before spending time on the Android build.
+python3 - "$0" <<'PYCHECK'
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+blocks = list(re.finditer(r"<<'([A-Z][A-Z0-9_]*)'\n(.*?)\n\1\n", text, re.S))
+if not blocks:
+    raise SystemExit("No quoted Python heredocs found in the build script")
+for index, match in enumerate(blocks, 1):
+    compile(match.group(2), f"{path}:heredoc-{match.group(1)}-{index}", "exec")
+print(f"Validated {len(blocks)} embedded Python blocks")
+PYCHECK
+
 rm -rf "$OUT" "$WORK"
 mkdir -p "$OUT" "$WORK/base" "$WORK/tools"
 unzip -q "$INPUT" -d "$WORK/base"
@@ -140,9 +154,7 @@ method = s[start:end]
 pos = method.rfind('    return-void')
 if pos < 0:
     raise SystemExit('Could not find return from LTVApp.onCreate()')
-hook = '    invoke-static {p0}, Lcom/alisat/vpn/WarpOverlayInstaller;->install(Landroid/app/Application;)V
-
-'
+hook = '    invoke-static {p0}, Lcom/alisat/vpn/WarpOverlayInstaller;->install(Landroid/app/Application;)V\n\n'
 method = method[:pos] + hook + method[pos:]
 p.write_text(s[:start] + method + s[end:], encoding='utf-8')
 PYHOOK
