@@ -115,12 +115,7 @@ needle = '</application>'
 if needle not in s:
     raise SystemExit('Could not find </application> in AndroidManifest.xml')
 fragment = '''
-        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="true" android:label="Cloudflare WARP" android:screenOrientation="portrait">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="false" android:label="Cloudflare WARP" android:screenOrientation="portrait" />
         <service android:name="com.wireguard.android.backend.GoBackend$VpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
         </service>
@@ -128,6 +123,29 @@ fragment = '''
 s = s.replace(needle, fragment + '\n' + needle, 1)
 p.write_text(s, encoding='utf-8')
 PY
+
+# Install a WARP shortcut into the existing app screens.
+python3 - "$BASE_DIR/smali/com/shadeed/ibopro/apps/LTVApp.smali" <<'PYHOOK'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text(encoding='utf-8')
+if 'WarpOverlayInstaller;->install' in s:
+    raise SystemExit('WARP overlay hook already exists in LTVApp.smali')
+start = s.find('.method public onCreate()V')
+end = s.find('.end method', start)
+if start < 0 or end < 0:
+    raise SystemExit('Could not find LTVApp.onCreate() in Smali source')
+method = s[start:end]
+pos = method.rfind('    return-void')
+if pos < 0:
+    raise SystemExit('Could not find return from LTVApp.onCreate()')
+hook = '    invoke-static {p0}, Lcom/alisat/vpn/WarpOverlayInstaller;->install(Landroid/app/Application;)V
+
+'
+method = method[:pos] + hook + method[pos:]
+p.write_text(s[:start] + method + s[end:], encoding='utf-8')
+PYHOOK
 
 APKTOOL_JAR="$WORK/tools/apktool.jar"
 curl --fail --location --silent --show-error \

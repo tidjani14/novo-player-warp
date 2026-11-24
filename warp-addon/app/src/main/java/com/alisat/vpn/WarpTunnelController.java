@@ -33,16 +33,23 @@ public final class WarpTunnelController {
     public interface Callback { void onResult(boolean ok, String message); }
     private static final String REGISTRATION_URL = "https://api.cloudflareclient.com/v0a2158/reg";
     private static final int TIMEOUT_MS = 15000;
+    private static volatile boolean connected;
+    private static volatile WarpTunnelController instance;
+    public static boolean isConnected() { return connected; }
+    public static synchronized WarpTunnelController get(Context context) {
+        if (instance == null) instance = new WarpTunnelController(context);
+        return instance;
+    }
     private final Context appContext;
     private final GoBackend backend;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Tunnel tunnel = new Tunnel() {
         @Override public String getName() { return "Cloudflare-WARP"; }
-        @Override public void onStateChange(State state) { }
+        @Override public void onStateChange(State state) { connected = state == State.UP; }
     };
 
-    public WarpTunnelController(Context context) {
+    private WarpTunnelController(Context context) {
         appContext = context.getApplicationContext();
         backend = new GoBackend(appContext);
     }
@@ -60,6 +67,7 @@ public final class WarpTunnelController {
                     config = Config.parse(reader);
                 }
                 backend.setState(tunnel, Tunnel.State.UP, config);
+                connected = true;
                 post(callback, true, "Cloudflare WARP connected");
             } catch (Exception e) {
                 post(callback, false, "Connection failed: " + safeMessage(e));
@@ -71,6 +79,7 @@ public final class WarpTunnelController {
         worker.execute(() -> {
             try {
                 backend.setState(tunnel, Tunnel.State.DOWN, null);
+                connected = false;
                 post(callback, true, "Cloudflare WARP disconnected");
             } catch (Exception e) {
                 post(callback, false, "Disconnect failed: " + safeMessage(e));
@@ -78,7 +87,7 @@ public final class WarpTunnelController {
         });
     }
 
-    public void close() { worker.shutdown(); }
+    public void close() { }
 
     private JSONObject registerWithCloudflare(String publicKey) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(REGISTRATION_URL).openConnection();
