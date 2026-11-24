@@ -14,7 +14,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Small WARP switch shown only while a video player screen is active. */
+/** Small WARP switch shown only on the main entry screen and playlist editor. */
 public final class WarpOverlayInstaller {
     private static final String TAG = "novo-warp-toggle";
     private static final int OFF_TEXT = Color.rgb(190, 165, 102);
@@ -28,7 +28,7 @@ public final class WarpOverlayInstaller {
     public static void install(Application application) {
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override public void onActivityCreated(Activity activity, Bundle state) {
-                if (!isToggleVisibleScreen(activity)) return;
+                if (!isTargetScreen(activity)) return;
                 View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
                 if (!(decor instanceof FrameLayout) || decor.findViewWithTag(TAG) != null) return;
 
@@ -47,7 +47,7 @@ public final class WarpOverlayInstaller {
                 update(toggle);
                 toggle.setOnClickListener(v -> beginToggle(activity, toggle));
 
-                // Compact top-right placement; it never appears on home, lists, or detail pages.
+                // Compact top-right placement; limited to the login entry and playlist editor.
                 FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 38), Gravity.TOP | Gravity.END);
                 params.setMargins(dp(activity, 8), dp(activity, 12), dp(activity, 14), dp(activity, 8));
@@ -55,7 +55,7 @@ public final class WarpOverlayInstaller {
             }
 
             @Override public void onActivityResumed(Activity activity) {
-                if (!isToggleVisibleScreen(activity) || activity.getWindow() == null) return;
+                if (!isTargetScreen(activity) || activity.getWindow() == null) return;
                 if (awaitingConsentReturn) {
                     awaitingConsentReturn = false;
                     busy = false;
@@ -75,7 +75,7 @@ public final class WarpOverlayInstaller {
         });
     }
 
-    private static boolean isToggleVisibleScreen(Activity activity) {
+    private static boolean isTargetScreen(Activity activity) {
         String name = activity.getClass().getName();
         return "com.shadeed.ibopro.MainActivity".equals(name)
                 || "com.shadeed.ibopro.activities.ChangePlaylistActivity".equals(name);
@@ -147,3 +147,4 @@ public final class WarpOverlayInstaller {
         return Math.round(value * activity.getResources().getDisplayMetrics().density);
     }
 }
+

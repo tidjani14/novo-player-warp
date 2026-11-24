@@ -22,3 +22,13 @@
 - سيتم توقيع الناتج بمفتاح جديد. لا يمكن تثبيته كتحديث فوق نسخة لها توقيع مختلف؛ احذف النسخة القديمة أو استعمل مفتاح التوقيع الأصلي إن كان متاحًا لديك.
 - التطبيق الأصلي مفكوك من APK وليس مشروع المصدر الأصلي. هذا يعيد بناء الموارد وSmali ثم يضيف شاشة WARP؛ ليس استعادة للمصدر Kotlin/Java غير الموجود.
 - نفق WARP يوجّه كل حركة الجهاز IPv4/IPv6 عبر `AllowedIPs = 0.0.0.0/0, ::/0`.
+
+
+## Smart WARP routing
+
+- Uses Cloudflare registration's WireGuard ports and documented defaults/fallbacks: UDP 2408, 500, 1701, and 4500.
+- Tests each candidate with a temporary WireGuard tunnel, verifies `warp=on` / `warp=plus` through Cloudflare trace, and measures a small download sample before reconnecting on the best verified port.
+- Remembers the preferred UDP port separately for Wi-Fi and mobile data.
+- Caches the registration and private key encrypted with Android Keystore AES-GCM on Android 6.0+; Android 5.x keeps it in memory only.
+- Compares at least two candidates; if a path is already at or below 180 ms and at least 8 Mbps, it skips remaining probes.
+- Cloudflare Anycast and ISP peering determine the data center; the app optimizes supported transport ports but cannot force a geographic colo.
