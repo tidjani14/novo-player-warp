@@ -236,15 +236,28 @@ public final class WarpTunnelController {
     }
 
     private ProbeResult probeTraceOnly(int port) {
-        try {
-            long started = SystemClock.elapsedRealtime();
-            String trace = fetchText(TRACE_URL + "?verify=" + System.nanoTime(), TRACE_TIMEOUT_MS);
-            long latency = Math.max(1, SystemClock.elapsedRealtime() - started);
-            if (!isWarpOn(trace)) return null;
-            return new ProbeResult(port, latency, -1, readTraceValue(trace, "colo"), true);
-        } catch (Exception ignored) {
-            return null;
+        final long[] retryDelayMs = {350L, 700L, 1200L};
+        for (int attempt = 0; attempt < 4; attempt++) {
+            if (attempt > 0) {
+                try {
+                    Thread.sleep(retryDelayMs[attempt - 1]);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
+            try {
+                long started = SystemClock.elapsedRealtime();
+                String trace = fetchText(TRACE_URL + "?verify=" + System.nanoTime(), TRACE_TIMEOUT_MS);
+                long latency = Math.max(1, SystemClock.elapsedRealtime() - started);
+                if (isWarpOn(trace)) {
+                    return new ProbeResult(port, latency, -1, readTraceValue(trace, "colo"), true);
+                }
+            } catch (Exception ignored) {
+                // Retry in case the WireGuard handshake is still starting.
+            }
         }
+        return null;
     }
 
     private double measureDownloadMbps() {
