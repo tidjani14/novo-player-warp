@@ -28,7 +28,7 @@ public final class WarpOverlayInstaller {
     public static void install(Application application) {
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override public void onActivityCreated(Activity activity, Bundle state) {
-                if (!isPlayerScreen(activity)) return;
+                if (!isToggleVisibleScreen(activity)) return;
                 View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
                 if (!(decor instanceof FrameLayout) || decor.findViewWithTag(TAG) != null) return;
 
@@ -55,7 +55,7 @@ public final class WarpOverlayInstaller {
             }
 
             @Override public void onActivityResumed(Activity activity) {
-                if (!isPlayerScreen(activity) || activity.getWindow() == null) return;
+                if (!isToggleVisibleScreen(activity) || activity.getWindow() == null) return;
                 if (awaitingConsentReturn) {
                     awaitingConsentReturn = false;
                     busy = false;
@@ -75,22 +75,10 @@ public final class WarpOverlayInstaller {
         });
     }
 
-    private static boolean isPlayerScreen(Activity activity) {
+    private static boolean isToggleVisibleScreen(Activity activity) {
         String name = activity.getClass().getName();
-        switch (name) {
-            case "com.shadeed.ibopro.activities.LiveChannelActivity":
-            case "com.shadeed.ibopro.activities.LiveActivity":
-            case "com.shadeed.ibopro.activities.mobile.LiveChannelMobileActivity":
-            case "com.shadeed.ibopro.activities.mobile.LiveMobileActivity":
-            case "com.shadeed.ibopro.activities.SeriesPlayerActivity":
-            case "com.shadeed.ibopro.activities.MoviePlayerActivity":
-            case "com.shadeed.ibopro.activities.CatchUpPlayerActivity":
-            case "com.shadeed.ibopro.activities.mobile.SeriesMobilePlayer":
-            case "com.shadeed.ibopro.activities.mobile.MovieMobilePlayer":
-                return true;
-            default:
-                return false;
-        }
+        return "com.shadeed.ibopro.MainActivity".equals(name)
+                || "com.shadeed.ibopro.activities.ChangePlaylistActivity".equals(name);
     }
 
     private static void beginToggle(Activity activity, TextView toggle) {
