@@ -129,7 +129,7 @@ needle = '</application>'
 if needle not in s:
     raise SystemExit('Could not find </application> in AndroidManifest.xml')
 fragment = '''
-        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="false" android:label="Cloudflare WARP" android:screenOrientation="portrait" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="false" android:label="Cloudflare WARP" android:screenOrientation="landscape" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service android:name="com.wireguard.android.backend.GoBackend$VpnService" android:permission="android.permission.BIND_VPN_SERVICE" android:exported="false">
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
         </service>

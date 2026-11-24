@@ -2,6 +2,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <application android:label="WARP build component" android:hasCode="true">
-        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="true" />
+        <activity android:name="com.alisat.vpn.WarpActivity" android:exported="true" android:screenOrientation="landscape" />
     </application>
 </manifest>
