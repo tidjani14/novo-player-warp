@@ -138,7 +138,6 @@ java -jar "$APKTOOL_JAR" b "$BASE_DIR" -o "$WORK/unsigned.apk" -f
 # apktool handles the two original Smali trees. Add the compiled component dex
 # and native libraries to the final package after apktool's resource rebuild.
 while IFS= read -r dex; do
-  unzip -p "$dex" >/dev/null
   (cd "$BASE_DIR" && zip -q "$WORK/unsigned.apk" "$(basename "$dex")")
 done < <(find "$BASE_DIR" -maxdepth 1 -type f -name 'classes[3-9]*.dex' | sort -V)
 if [[ -d "$BASE_DIR/lib" ]]; then
