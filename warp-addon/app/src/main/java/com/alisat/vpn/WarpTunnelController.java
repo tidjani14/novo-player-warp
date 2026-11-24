@@ -70,6 +70,7 @@ public final class WarpTunnelController {
                 connected = true;
                 connected = true;
                 connected = true;
+                connected = true;
                 post(callback, true, "Cloudflare WARP connected");
             } catch (Exception e) {
                 post(callback, false, "Connection failed: " + safeMessage(e));
@@ -81,6 +82,7 @@ public final class WarpTunnelController {
         worker.execute(() -> {
             try {
                 backend.setState(tunnel, Tunnel.State.DOWN, null);
+                connected = false;
                 connected = false;
                 connected = false;
                 connected = false;
