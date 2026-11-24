@@ -1,0 +1,30 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.alisat.warpaddon'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.alisat.warpaddon'
+        minSdk 21
+        targetSdk 33
+        versionCode 1
+        versionName '1.0'
+        multiDexEnabled true
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+    buildTypes { release { minifyEnabled false } }
+}
+
+dependencies {
+    // 20250531 preserves the base app's Android 5.0 (API 21) minimum.
+    implementation('com.wireguard.android:tunnel:1.0.20250531') { transitive = false }
+    // Compile against libraries already present in the decompiled base APK;
+    // do not package duplicates into the add-on DEX.
+    compileOnly 'androidx.annotation:annotation:1.9.1'
+    compileOnly 'androidx.collection:collection:1.4.5'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}

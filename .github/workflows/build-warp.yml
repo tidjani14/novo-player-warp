@@ -1,0 +1,38 @@
+name: Build NOVO Player with Cloudflare WARP
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'NOVO_PLAYER_v3.8(40)_base_src.zip'
+      - 'warp-addon/**'
+      - 'scripts/**'
+      - '.github/workflows/build-warp.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./scripts/build_github.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOVO-PLAYER-WARP-APK
+          path: output/NOVO_PLAYER_3.8_WARP.apk
+          if-no-files-found: error
