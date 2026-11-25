@@ -24,11 +24,10 @@
 - نفق WARP يوجّه كل حركة الجهاز IPv4/IPv6 عبر `AllowedIPs = 0.0.0.0/0, ::/0`.
 
 
-## Smart WARP routing
+## اتصال WARP الثابت
 
-- Uses Cloudflare registration's WireGuard ports and documented defaults/fallbacks: UDP 2408, 500, 1701, and 4500.
-- Tests each candidate with a temporary WireGuard tunnel, verifies `warp=on` / `warp=plus` through Cloudflare trace, and measures a small download sample before reconnecting on the best verified port.
-- Remembers the preferred UDP port separately for Wi-Fi and mobile data.
-- Caches the registration and private key encrypted with Android Keystore AES-GCM on Android 6.0+; Android 5.x keeps it in memory only.
-- Compares at least two candidates; if a path is already at or below 180 ms and at least 8 Mbps, it skips remaining probes.
-- Cloudflare Anycast and ISP peering determine the data center; the app optimizes supported transport ports but cannot force a geographic colo.
+- يستخدم التطبيق منفذ WireGuard الأساسي الذي يرجعه تسجيل Cloudflare، ومنفذ 2408 كقيمة افتراضية عند غياب المنفذ.
+- لا يفحص منافذ متعددة ولا يشغّل اختبارات سرعة ولا يعيد تشغيل النفق لاختيار مسار آخر.
+- يحتفظ بتسجيل Cloudflare والمفتاح الخاص مشفّرين بمفتاح Android Keystore على Android 6.0 وما بعده.
+- لا يعرض الحالة متصلًا إلا بعد تأكيد Cloudflare trace.
+- هذا تكامل WireGuard مباشر؛ تطبيق Cloudflare الرسمي يستخدم MASQUE افتراضيًا حاليًا، والبروتوكولان مختلفان.

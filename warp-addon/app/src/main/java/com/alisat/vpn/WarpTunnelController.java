@@ -2,8 +2,6 @@ package com.alisat.vpn;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
@@ -33,11 +31,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
-import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
@@ -47,26 +41,18 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/**
- * Cloudflare WARP WireGuard controller with adaptive port selection.
- * It verifies the tunnel using Cloudflare's documented warp=on trace field,
- * benchmarks a small download, and remembers the best port per network type.
- */
+/** Cloudflare WARP WireGuard controller using Cloudflare's primary registered route. */
 public final class WarpTunnelController {
     public interface Callback { void onResult(boolean ok, String message); }
 
     private static final String REGISTRATION_URL = "https://api.cloudflareclient.com/v0a2158/reg";
     private static final String TRACE_URL = "https://www.cloudflare.com/cdn-cgi/trace";
-    private static final String SPEED_URL = "https://speed.cloudflare.com/__down?bytes=131072&probe=";
     private static final int REGISTRATION_TIMEOUT_MS = 12000;
     private static final int TRACE_TIMEOUT_MS = 2200;
-    private static final int SPEED_TIMEOUT_MS = 2600;
-    private static final int SPEED_SAMPLE_BYTES = 131072;
     private static final String PREFS_NAME = "novo_warp_smart_v2";
     private static final String PREF_CIPHER = "account_cipher";
     private static final String PREF_IV = "account_iv";
     private static final String KEY_ALIAS = "novo_player_warp_account_v2";
-    private static final int[] DOCUMENTED_WG_PORTS = {2408, 500, 1701, 4500};
 
     private static volatile boolean connected;
     private static volatile WarpTunnelController instance;
@@ -107,21 +93,9 @@ public final class WarpTunnelController {
         worker.execute(() -> {
             try {
                 Account account = loadCachedAccount();
-                boolean usedCache = account != null;
                 if (account == null) account = registerNewAccount();
-
-                try {
-                    ProbeResult best = connectUsingBestRoute(account);
-                    post(callback, true, describe(best));
-                } catch (Exception firstFailure) {
-                    if (!usedCache) throw firstFailure;
-                    // A cached registration can be revoked or expire. Refresh once, then retry.
-                    disconnectBackendQuietly();
-                    clearCachedAccount();
-                    Account refreshed = registerNewAccount();
-                    ProbeResult best = connectUsingBestRoute(refreshed);
-                    post(callback, true, describe(best));
-                }
+                ProbeResult active = connectUsingFixedRoute(account);
+                post(callback, true, describe(active));
             } catch (Exception e) {
                 connected = false;
                 disconnectBackendQuietly();
@@ -149,94 +123,32 @@ public final class WarpTunnelController {
     public double getSelectedMbps() { return selectedMbps; }
     public void close() { }
 
-    private ProbeResult connectUsingBestRoute(Account account) throws Exception {
-        List<Integer> ports = getCandidatePorts(account.config);
-        if (ports.isEmpty()) throw new IllegalStateException("Cloudflare returned no usable WireGuard ports");
+    private ProbeResult connectUsingFixedRoute(Account account) throws Exception {
+        int port = getPrimaryPort(account.config);
+        Config config = parseTunnelConfig(account, port);
+        backend.setState(tunnel, Tunnel.State.UP, config);
+        backendUp = true;
 
-        int preferred = getPreferredPort();
-        if (ports.remove(Integer.valueOf(preferred))) ports.add(0, preferred);
-
-        List<ProbeResult> successful = new ArrayList<>();
-        Exception lastFailure = null;
-        int testedPorts = 0;
-
-        for (int port : ports) {
-            testedPorts++;
-            boolean attempted = false;
-            try {
-                Config config = parseTunnelConfig(account, port);
-                attempted = true;
-                backend.setState(tunnel, Tunnel.State.UP, config);
-                backendUp = true;
-
-                ProbeResult result = probeActiveTunnel(port);
-                if (result != null && result.warpVerified) successful.add(result);
-            } catch (Exception e) {
-                lastFailure = e;
-            } finally {
-                if (attempted || backendUp) disconnectBackendQuietly();
-            }
-
-            // Compare at least two paths. If one is already fast and healthy, avoid
-            // spending time probing every remaining fallback port.
-            if (testedPorts >= 2 && !successful.isEmpty()) {
-                ProbeResult currentBest = Collections.max(successful,
-                        (a, b) -> Double.compare(a.score(), b.score()));
-                if (currentBest.latencyMs <= 180 && currentBest.mbps >= 8.0d) break;
-            }
-        }
-
-        if (successful.isEmpty()) {
-            if (lastFailure != null) throw new IllegalStateException(
-                    "No WireGuard port passed the WARP connectivity test: " + safeMessage(lastFailure), lastFailure);
-            throw new IllegalStateException("No WireGuard port passed Cloudflare's WARP verification");
-        }
-
-        Collections.sort(successful, (a, b) -> Double.compare(b.score(), a.score()));
-        Exception finalFailure = null;
-        for (ProbeResult candidate : successful) {
-            try {
-                Config bestConfig = parseTunnelConfig(account, candidate.port);
-                backend.setState(tunnel, Tunnel.State.UP, bestConfig);
-                backendUp = true;
-
-                ProbeResult verification = probeTraceOnly(candidate.port);
-                if (verification == null || !verification.warpVerified) {
-                    throw new IllegalStateException("The selected route did not pass final WARP verification");
-                }
-
-                connected = true;
-                selectedPort = candidate.port;
-                selectedLatencyMs = candidate.latencyMs;
-                selectedMbps = candidate.mbps;
-                savePreferredPort(candidate.port);
-                return candidate;
-            } catch (Exception e) {
-                finalFailure = e;
-                disconnectBackendQuietly();
-            }
-        }
-        if (finalFailure != null) throw finalFailure;
-        throw new IllegalStateException("Unable to activate the fastest verified WARP route");
-    }
-
-    private ProbeResult probeActiveTunnel(int port) {
         try {
-            long started = SystemClock.elapsedRealtime();
-            String trace = fetchText(TRACE_URL + "?smart=" + System.nanoTime(), TRACE_TIMEOUT_MS);
-            long latency = Math.max(1, SystemClock.elapsedRealtime() - started);
-            if (!isWarpOn(trace)) return null;
-
-            String colo = readTraceValue(trace, "colo");
-            double mbps = measureDownloadMbps();
-            return new ProbeResult(port, latency, mbps, colo, true);
-        } catch (Exception ignored) {
-            return null;
+            ProbeResult verified = probeTraceOnly(port);
+            if (verified == null || !verified.warpVerified) {
+                throw new IllegalStateException(
+                        "Cloudflare did not verify WARP on the configured WireGuard route");
+            }
+            connected = true;
+            selectedPort = port;
+            selectedLatencyMs = verified.latencyMs;
+            selectedMbps = -1;
+            return verified;
+        } catch (Exception e) {
+            disconnectBackendQuietly();
+            throw e;
         }
     }
+
 
     private ProbeResult probeTraceOnly(int port) {
-        final long[] retryDelayMs = {350L, 700L, 1200L};
+        long[] retryDelayMs = {350L, 700L, 1200L};
         for (int attempt = 0; attempt < 4; attempt++) {
             if (attempt > 0) {
                 try {
@@ -248,54 +160,20 @@ public final class WarpTunnelController {
             }
             try {
                 long started = SystemClock.elapsedRealtime();
-                String trace = fetchText(TRACE_URL + "?verify=" + System.nanoTime(), TRACE_TIMEOUT_MS);
+                String trace = fetchText(
+                        TRACE_URL + "?verify=" + System.nanoTime(), TRACE_TIMEOUT_MS);
                 long latency = Math.max(1, SystemClock.elapsedRealtime() - started);
                 if (isWarpOn(trace)) {
-                    return new ProbeResult(port, latency, -1, readTraceValue(trace, "colo"), true);
+                    return new ProbeResult(
+                            port, latency, -1, readTraceValue(trace, "colo"), true);
                 }
             } catch (Exception ignored) {
-                // Retry in case the WireGuard handshake is still starting.
+                // Retry while WireGuard completes its handshake.
             }
         }
         return null;
     }
 
-    private double measureDownloadMbps() {
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(SPEED_URL + System.nanoTime());
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(SPEED_TIMEOUT_MS);
-            connection.setReadTimeout(SPEED_TIMEOUT_MS);
-            connection.setUseCaches(false);
-            connection.setInstanceFollowRedirects(true);
-            connection.setRequestProperty("Cache-Control", "no-cache");
-            connection.setRequestProperty("Connection", "close");
-            connection.setRequestProperty("Accept-Encoding", "identity");
-            int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) return -1;
-
-            long started = SystemClock.elapsedRealtime();
-            int total = 0;
-            byte[] buffer = new byte[8192];
-            try (InputStream in = connection.getInputStream()) {
-                while (total < SPEED_SAMPLE_BYTES) {
-                    int read = in.read(buffer, 0, Math.min(buffer.length, SPEED_SAMPLE_BYTES - total));
-                    if (read < 0) break;
-                    total += read;
-                }
-            }
-            long elapsed = Math.max(1, SystemClock.elapsedRealtime() - started);
-            if (total < SPEED_SAMPLE_BYTES / 2) return -1;
-            // Mbps = bits / milliseconds / 1000.
-            return (total * 8.0d) / elapsed / 1000.0d;
-        } catch (Exception ignored) {
-            return -1;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
-    }
 
     private static String fetchText(String address, int timeoutMs) throws Exception {
         HttpURLConnection connection = null;
@@ -453,57 +331,28 @@ public final class WarpTunnelController {
         return value;
     }
 
-    private static List<Integer> getCandidatePorts(JSONObject config) throws Exception {
-        JSONObject peer = config.getJSONArray("peers").getJSONObject(0);
-        JSONObject endpoint = peer.getJSONObject("endpoint");
-        LinkedHashSet<Integer> values = new LinkedHashSet<>();
+    private static int getPrimaryPort(JSONObject config) throws Exception {
+        JSONObject endpoint = config.getJSONArray("peers").getJSONObject(0).getJSONObject("endpoint");
         JSONArray ports = endpoint.optJSONArray("ports");
         if (ports != null) {
             for (int i = 0; i < ports.length(); i++) {
                 int port = ports.optInt(i, -1);
-                if (port > 0 && port <= 65535) values.add(port);
-            }
-        } else {
-            Object raw = endpoint.opt("ports");
-            if (raw instanceof Number) {
-                int port = ((Number) raw).intValue();
-                if (port > 0 && port <= 65535) values.add(port);
-            } else if (raw instanceof String) {
-                try {
-                    int port = Integer.parseInt((String) raw);
-                    if (port > 0 && port <= 65535) values.add(port);
-                } catch (NumberFormatException ignored) { }
+                if (port > 0 && port <= 65535) return port;
             }
         }
-        // Cloudflare documents 2408 as default and 500/1701/4500 as WireGuard fallbacks.
-        for (int port : DOCUMENTED_WG_PORTS) values.add(port);
-        List<Integer> result = new ArrayList<>(values);
-        if (result.size() > 4) return new ArrayList<>(result.subList(0, 4));
-        return result;
+        Object raw = endpoint.opt("ports");
+        if (raw instanceof Number) {
+            int port = ((Number) raw).intValue();
+            if (port > 0 && port <= 65535) return port;
+        } else if (raw instanceof String) {
+            try {
+                int port = Integer.parseInt((String) raw);
+                if (port > 0 && port <= 65535) return port;
+            } catch (NumberFormatException ignored) { }
+        }
+        return 2408;
     }
 
-    private int getPreferredPort() {
-        return appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getInt("best_port_" + getNetworkTypeKey(), -1);
-    }
-
-    private void savePreferredPort(int port) {
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putInt("best_port_" + getNetworkTypeKey(), port).apply();
-    }
-
-    private String getNetworkTypeKey() {
-        try {
-            ConnectivityManager manager = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
-            NetworkInfo info = manager == null ? null : manager.getActiveNetworkInfo();
-            if (info != null && info.isConnected()) {
-                if (info.getType() == ConnectivityManager.TYPE_WIFI) return "wifi";
-                if (info.getType() == ConnectivityManager.TYPE_MOBILE) return "mobile";
-                return "other_" + info.getType();
-            }
-        } catch (Exception ignored) { }
-        return "unknown";
-    }
 
     private Account loadCachedAccount() {
         if (memoryAccount != null) return memoryAccount;
@@ -625,9 +474,6 @@ public final class WarpTunnelController {
             this.mbps = mbps;
             this.colo = colo == null ? "" : colo;
             this.warpVerified = warpVerified;
-        }
-        double score() {
-            return (mbps > 0 ? mbps * 1000.0d : 0.0d) - latencyMs;
         }
     }
 }
