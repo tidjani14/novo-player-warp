@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -29,8 +30,9 @@ public final class WarpOverlayInstaller {
         application.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             @Override public void onActivityCreated(Activity activity, Bundle state) {
                 if (!isControlScreen(activity)) return;
-                View decor = activity.getWindow() == null ? null : activity.getWindow().getDecorView();
-                if (!(decor instanceof FrameLayout) || decor.findViewWithTag(TAG) != null) return;
+                if (activity.getWindow() == null) return;
+                View content = activity.findViewById(android.R.id.content);
+                if (!(content instanceof FrameLayout) || content.findViewWithTag(TAG) != null) return;
 
                 TextView toggle = new TextView(activity);
                 toggle.setTag(TAG);
@@ -59,23 +61,50 @@ public final class WarpOverlayInstaller {
                     toggle.setEnabled(false);
                     Intent intent = new Intent(activity, WarpActivity.class);
                     intent.putExtra(WarpActivity.EXTRA_TOGGLE, true);
+                    intent.putExtra(WarpActivity.EXTRA_SYSTEM_UI_FLAGS,
+                            activity.getWindow().getDecorView().getSystemUiVisibility());
+                    int systemWindowFlags = android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN
+                            | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                            | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+                            | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_HIDE_NAVIGATION
+                            | android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                            | android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION;
+                    intent.putExtra(WarpActivity.EXTRA_WINDOW_FLAGS,
+                            activity.getWindow().getAttributes().flags & systemWindowFlags);
                     intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    activity.startActivity(intent);
+                    try {
+                        activity.startActivity(intent);
+                        activity.overridePendingTransition(0, 0);
+                    } catch (RuntimeException error) {
+                        toggle.setEnabled(true);
+                        Log.e(TAG, "Could not open the WARP controller", error);
+                    }
                 });
 
                 FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 44), Gravity.TOP | Gravity.END);
                 // Keep it in the top action area, clear of the list rows and bottom controls.
                 params.setMargins(dp(activity, 12), dp(activity, 12), dp(activity, 18), dp(activity, 12));
-                ((FrameLayout) decor).addView(toggle, params);
+                try {
+                    ((FrameLayout) content).addView(toggle, params);
+                } catch (RuntimeException error) {
+                    Log.e(TAG, "Could not attach the WARP toggle to this screen", error);
+                }
             }
 
             @Override public void onActivityResumed(Activity activity) {
                 if (!isControlScreen(activity) || activity.getWindow() == null) return;
-                View toggle = activity.getWindow().getDecorView().findViewWithTag(TAG);
+                View content = activity.findViewById(android.R.id.content);
+                if (content == null) return;
+                View toggle = content.findViewWithTag(TAG);
                 if (toggle instanceof TextView) {
-                    toggle.setEnabled(true);
-                    update((TextView) toggle);
+                    try {
+                        toggle.setEnabled(true);
+                        update((TextView) toggle);
+                    } catch (RuntimeException error) {
+                        Log.e(TAG, "Could not refresh the WARP toggle", error);
+                    }
                 }
             }
 

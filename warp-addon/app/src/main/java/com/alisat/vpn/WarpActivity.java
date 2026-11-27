@@ -2,44 +2,62 @@ package com.alisat.vpn;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.ActivityInfo;
 import android.os.Bundle;
-import android.widget.Toast;
+import android.view.WindowManager;
 
 /** Performs the overlay's one-tap connect/disconnect action without opening a screen. */
 public final class WarpActivity extends Activity {
     public static final String EXTRA_TOGGLE = "com.alisat.vpn.extra.TOGGLE";
+    public static final String EXTRA_SYSTEM_UI_FLAGS = "com.alisat.vpn.extra.SYSTEM_UI_FLAGS";
+    public static final String EXTRA_WINDOW_FLAGS = "com.alisat.vpn.extra.WINDOW_FLAGS";
     private static final int VPN_CONSENT_REQUEST = 731;
     private WarpTunnelController controller;
     private boolean operationStarted;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // The original player is landscape. Keep this transparent dispatcher in
-        // landscape too, so launching it never rotates the visible player UI.
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-        controller = WarpTunnelController.get(this);
-        if (getIntent().getBooleanExtra(EXTRA_TOGGLE, false)) toggleTunnel();
-        else finish();
+        // Do not force orientation: the manifest uses "behind" so this
+        // transparent dispatcher follows the current player screen.
+        try {
+            Intent launch = getIntent();
+            if (getWindow() != null) {
+                int uiFlags = launch.getIntExtra(EXTRA_SYSTEM_UI_FLAGS, 0);
+                getWindow().getDecorView().setSystemUiVisibility(uiFlags);
+                int safeFlags = WindowManager.LayoutParams.FLAG_FULLSCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_HIDE_NAVIGATION
+                        | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                        | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION;
+                getWindow().addFlags(launch.getIntExtra(EXTRA_WINDOW_FLAGS, 0) & safeFlags);
+            }
+            controller = WarpTunnelController.get(this);
+            if (launch.getBooleanExtra(EXTRA_TOGGLE, false)) toggleTunnel();
+            else finish();
+        } catch (RuntimeException error) {
+            finishOperation(false, error.getMessage());
+        }
     }
 
     private void toggleTunnel() {
         if (operationStarted) return;
         operationStarted = true;
-        if (WarpTunnelController.isConnected()) {
-            controller.disconnect(this::finishOperation);
-            return;
+        try {
+            if (WarpTunnelController.isConnected()) {
+                controller.disconnect(this::finishOperation);
+                return;
+            }
+            if (!isVpnAuthorized()) {
+                finish();
+                return;
+            }
+            Intent consent = controller.prepare();
+            if (consent == null) startConnection();
+            else startActivityForResult(consent, VPN_CONSENT_REQUEST);
+        } catch (RuntimeException error) {
+            finishOperation(false, error.getMessage());
         }
-
-        if (!isVpnAuthorized()) {
-            Toast.makeText(this, "VPN access is not enabled for this device", Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
-
-        Intent consent = controller.prepare();
-        if (consent == null) startConnection();
-        else startActivityForResult(consent, VPN_CONSENT_REQUEST);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -50,7 +68,11 @@ public final class WarpActivity extends Activity {
     }
 
     private void startConnection() {
-        controller.connect(this::finishOperation);
+        try {
+            controller.connect(this::finishOperation);
+        } catch (RuntimeException error) {
+            finishOperation(false, error.getMessage());
+        }
     }
 
     private void finishOperation(boolean ok, String message) {

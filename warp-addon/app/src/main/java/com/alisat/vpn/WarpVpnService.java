@@ -39,13 +39,35 @@ public final class WarpVpnService extends VpnService implements SocketProtector 
         String action = intent == null ? ACTION_CONNECT : intent.getAction();
         if (ACTION_DISCONNECT.equals(action)) {
             stopping.set(true);
-            worker.execute(() -> stopTunnel(true));
+            try {
+                worker.execute(() -> stopTunnel(true));
+            } catch (RuntimeException error) {
+                Log.e(TAG, "Could not schedule tunnel shutdown", error);
+                WarpTunnelController.reportFailure(error.getMessage());
+                stopSelf(startId);
+            }
             return START_NOT_STICKY;
         }
-        startForegroundCompat();
+        try {
+            startForegroundCompat();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Could not start the VPN foreground service", error);
+            WarpTunnelController.reportFailure(error.getMessage());
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         if (running.compareAndSet(false, true)) {
             stopping.set(false);
-            worker.execute(this::startTunnel);
+            try {
+                worker.execute(this::startTunnel);
+            } catch (RuntimeException error) {
+                running.set(false);
+                Log.e(TAG, "Could not schedule MASQUE startup", error);
+                WarpTunnelController.reportFailure(error.getMessage());
+                stopForeground(true);
+                stopSelf(startId);
+                return START_NOT_STICKY;
+            }
         }
         return START_STICKY;
     }

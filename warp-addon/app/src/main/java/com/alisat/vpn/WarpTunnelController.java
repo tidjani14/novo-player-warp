@@ -36,15 +36,23 @@ public final class WarpTunnelController {
         connected = false;
         Intent intent = new Intent(appContext, WarpVpnService.class)
                 .setAction(WarpVpnService.ACTION_CONNECT);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) appContext.startForegroundService(intent);
-        else appContext.startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) appContext.startForegroundService(intent);
+            else appContext.startService(intent);
+        } catch (RuntimeException error) {
+            reportFailure(error.getMessage());
+        }
     }
 
     public void disconnect(Callback callback) {
         pendingCallback = callback;
         Intent intent = new Intent(appContext, WarpVpnService.class)
                 .setAction(WarpVpnService.ACTION_DISCONNECT);
-        appContext.startService(intent);
+        try {
+            appContext.startService(intent);
+        } catch (RuntimeException error) {
+            reportFailure(error.getMessage());
+        }
     }
 
     static void reportConnected() {
