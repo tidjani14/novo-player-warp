@@ -5,7 +5,7 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId 'com.alisat.warpaddon'
-        minSdk 21
+        minSdk 24
         targetSdk 33
         versionCode 1
         versionName '1.0'
@@ -14,17 +14,14 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        coreLibraryDesugaringEnabled true
     }
     buildTypes { release { minifyEnabled false } }
 }
 
+// The Go/gomobile runtime AAR contains its Java bindings and native libraries.
+android.sourceSets.main.jniLibs.srcDirs = []
+
 dependencies {
-    // 20250531 preserves the base app's Android 5.0 (API 21) minimum.
-    implementation('com.wireguard.android:tunnel:1.0.20250531') { transitive = false }
-    // Compile against libraries already present in the decompiled base APK;
-    // do not package duplicates into the add-on DEX.
-    compileOnly 'androidx.annotation:annotation:1.9.1'
-    compileOnly 'androidx.collection:collection:1.4.5'
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    // Rebuilt from the pinned upstream Go source with Android socket protection.
+    implementation files('libs/usque-android.aar')
 }

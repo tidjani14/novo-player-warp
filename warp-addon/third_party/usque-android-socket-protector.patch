@@ -1,0 +1,151 @@
+diff --git a/android/usque_android.go b/android/usque_android.go
+index 4407460..4190bfc 100644
+--- a/android/usque_android.go
++++ b/android/usque_android.go
+@@ -40,6 +40,12 @@ type VpnStateCallback interface {
+ 	OnError(message string)
+ }
+ 
++// SocketProtector is implemented by Android's VpnService. Protect must be
++// called before the MASQUE UDP socket connects to avoid routing loops.
++type SocketProtector interface {
++	Protect(fd int32) bool
++}
++
+ type tunnelState struct {
+ 	mu        sync.Mutex
+ 	running   bool
+@@ -228,6 +234,10 @@ func (d *AndroidTunDevice) Close() error {
+ // It returns only validation/setup errors; connection establishment and
+ // reconnects are reported through callback notifications.
+ func StartTunnel(configPath string, tunFd int, mtu int, packetFlow PacketFlow, callback VpnStateCallback) string {
++	return startTunnel(configPath, tunFd, mtu, packetFlow, callback, nil)
++}
++
++func startTunnel(configPath string, tunFd int, mtu int, packetFlow PacketFlow, callback VpnStateCallback, protector SocketProtector) string {
+ 	if mtu <= 0 || mtu > 65535 {
+ 		return fmt.Sprintf("Invalid MTU: %d", mtu)
+ 	}
+@@ -308,6 +318,10 @@ func StartTunnel(configPath string, tunFd int, mtu int, packetFlow PacketFlow, c
+ 	state.running = true
+ 	state.connected = false
+ 	state.mu.Unlock()
++	var protectSocket func(fd int32) bool
++	if protector != nil {
++		protectSocket = protector.Protect
++	}
+ 
+ 	log.Printf("Starting MASQUE tunnel: endpoint=%s, sni=%s, mtu=%d", endpoint, sni, mtu)
+ 	go func() {
+@@ -322,6 +336,7 @@ func StartTunnel(configPath string, tunFd int, mtu int, packetFlow PacketFlow, c
+ 			ReconnectDelay:    time.Second,
+ 			AlwaysReconnect:   true,
+ 			UseHTTP2:          false,
++			SocketProtector: protectSocket,
+ 			OnConnected: func() {
+ 				state.mu.Lock()
+ 				if !state.running || state.runID != runID {
+@@ -537,6 +552,12 @@ func StartTunnelWithFd(configPath string, tunFd int, callback VpnStateCallback)
+ 	return StartTunnel(configPath, tunFd, 1280, nil, callback)
+ }
+ 
++// StartTunnelWithFdProtected starts the tunnel using Android's socket
++// protection callback for the MASQUE transport socket.
++func StartTunnelWithFdProtected(configPath string, tunFd int, callback VpnStateCallback, protector SocketProtector) string {
++	return startTunnel(configPath, tunFd, 1280, nil, callback, protector)
++}
++
+ type fdReadWriter struct {
+ 	file *os.File
+ }
+diff --git a/api/masque.go b/api/masque.go
+index 6b2c5d9..a1ef8fd 100644
+--- a/api/masque.go
++++ b/api/masque.go
+@@ -107,6 +107,12 @@ func PrepareTlsConfig(privKey *ecdsa.PrivateKey, peerPubKey *ecdsa.PublicKey, ce
+ //   - *http.Response: The response from the Connect-IP handshake.
+ //   - error: An error if the connection setup fails.
+ func ConnectTunnel(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.Config, connectUri string, endpoint net.Addr, useHTTP2 bool) (*net.UDPConn, *http3.Transport, *connectip.Conn, *http.Response, error) {
++	return ConnectTunnelWithProtector(ctx, tlsConfig, quicConfig, connectUri, endpoint, useHTTP2, nil)
++}
++
++// ConnectTunnelWithProtector protects the outer MASQUE socket before QUIC
++// connects, allowing app traffic to use the Android VPN without a routing loop.
++func ConnectTunnelWithProtector(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.Config, connectUri string, endpoint net.Addr, useHTTP2 bool, protect func(fd int32) bool) (*net.UDPConn, *http3.Transport, *connectip.Conn, *http.Response, error) {
+ 	template := uritemplate.MustNew(connectUri)
+ 	additionalHeaders := http.Header{
+ 		"User-Agent": []string{""},
+@@ -145,7 +151,7 @@ func ConnectTunnel(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.
+ 
+ 	var lastErr error
+ 	for attempt := 0; attempt < 2; attempt++ {
+-		udpConn, tr, ipConn, rsp, err := connectTunnelHTTP3(ctx, tlsConfig, quicConfig, template, additionalHeaders, quicEndpoint)
++		udpConn, tr, ipConn, rsp, err := connectTunnelHTTP3(ctx, tlsConfig, quicConfig, template, additionalHeaders, quicEndpoint, protect)
+ 		if err == nil {
+ 			return udpConn, tr, ipConn, rsp, nil
+ 		}
+@@ -160,7 +166,7 @@ func ConnectTunnel(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.
+ 	return nil, nil, nil, nil, fmt.Errorf("failed to dial connect-ip: %w", lastErr)
+ }
+ 
+-func connectTunnelHTTP3(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.Config, template *uritemplate.Template, additionalHeaders http.Header, endpoint *net.UDPAddr) (*net.UDPConn, *http3.Transport, *connectip.Conn, *http.Response, error) {
++func connectTunnelHTTP3(ctx context.Context, tlsConfig *tls.Config, quicConfig *quic.Config, template *uritemplate.Template, additionalHeaders http.Header, endpoint *net.UDPAddr, protect func(fd int32) bool) (*net.UDPConn, *http3.Transport, *connectip.Conn, *http.Response, error) {
+ 	var udpConn *net.UDPConn
+ 	var err error
+ 	if endpoint.IP.To4() == nil {
+@@ -177,6 +183,26 @@ func connectTunnelHTTP3(ctx context.Context, tlsConfig *tls.Config, quicConfig *
+ 	if err != nil {
+ 		return udpConn, nil, nil, nil, err
+ 	}
++	if protect != nil {
++		raw, rawErr := udpConn.SyscallConn()
++		if rawErr != nil {
++			_ = udpConn.Close()
++			return nil, nil, nil, nil, fmt.Errorf("get MASQUE socket descriptor: %w", rawErr)
++		}
++		var protectErr error
++		if rawErr = raw.Control(func(fd uintptr) {
++			if !protect(int32(fd)) {
++				protectErr = errors.New("Android rejected MASQUE socket protection")
++			}
++		}); rawErr != nil {
++			_ = udpConn.Close()
++			return nil, nil, nil, nil, fmt.Errorf("protect MASQUE socket: %w", rawErr)
++		}
++		if protectErr != nil {
++			_ = udpConn.Close()
++			return nil, nil, nil, nil, protectErr
++		}
++	}
+ 
+ 	// without ConnectionIDLength set, backend occasionally throws PROTOCOL_VIOLATION
+ 	// and that closes our connection
+diff --git a/api/tunnel.go b/api/tunnel.go
+index e7fe4bf..5fedd1e 100644
+--- a/api/tunnel.go
++++ b/api/tunnel.go
+@@ -170,6 +170,8 @@ type MaintainTunnelConfig struct {
+ 	ReconnectDelay    time.Duration
+ 	AlwaysReconnect   bool
+ 	UseHTTP2          bool
++	// SocketProtector bypasses the VPN route for the outer MASQUE socket.
++	SocketProtector func(fd int32) bool
+ 	// OnConnect is a path to an executable run after every successful tunnel
+ 	// connect. It is exec'd directly (no shell, no args) and runs fire-and-forget.
+ 	OnConnect string
+@@ -276,13 +278,14 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
+ 		}
+ 
+ 		log.Printf("Establishing MASQUE connection to %s", cfg.Endpoint)
+-		udpConn, tr, ipConn, rsp, err := ConnectTunnel(
++		udpConn, tr, ipConn, rsp, err := ConnectTunnelWithProtector(
+ 			ctx,
+ 			cfg.TLSConfig,
+ 			internal.DefaultQuicConfig(cfg.KeepalivePeriod, cfg.InitialPacketSize),
+ 			internal.ConnectURI,
+ 			cfg.Endpoint,
+ 			cfg.UseHTTP2,
++			cfg.SocketProtector,
+ 		)
+ 		if err != nil {
+ 			log.Printf("Failed to connect tunnel: %v", err)

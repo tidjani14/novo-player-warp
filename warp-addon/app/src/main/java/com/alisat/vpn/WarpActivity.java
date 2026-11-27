@@ -2,6 +2,7 @@ package com.alisat.vpn;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.widget.Toast;
 
@@ -14,6 +15,9 @@ public final class WarpActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // The original player is landscape. Keep this transparent dispatcher in
+        // landscape too, so launching it never rotates the visible player UI.
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         controller = WarpTunnelController.get(this);
         if (getIntent().getBooleanExtra(EXTRA_TOGGLE, false)) toggleTunnel();
         else finish();
@@ -24,6 +28,12 @@ public final class WarpActivity extends Activity {
         operationStarted = true;
         if (WarpTunnelController.isConnected()) {
             controller.disconnect(this::finishOperation);
+            return;
+        }
+
+        if (!isVpnAuthorized()) {
+            Toast.makeText(this, "VPN access is not enabled for this device", Toast.LENGTH_LONG).show();
+            finish();
             return;
         }
 
@@ -44,7 +54,28 @@ public final class WarpActivity extends Activity {
     }
 
     private void finishOperation(boolean ok, String message) {
-        if (!ok) Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        // Keep connect/disconnect silent; the toggle reflects the resulting state.
         finish();
+    }
+
+    /** Read the VPN entitlement delivered in the app's existing auth response. */
+    private boolean isVpnAuthorized() {
+        try {
+            Class<?> preferenceClass = Class.forName("com.shadeed.ibopro.helper.PreferenceHelper");
+            Object preferences = preferenceClass
+                    .getConstructor(android.content.Context.class)
+                    .newInstance(getApplicationContext());
+            Object appInfo = preferenceClass.getMethod("getSharedPreferenceAppInfo").invoke(preferences);
+            if (appInfo == null) return false;
+            Object allowed = appInfo.getClass().getMethod("isVpn_allowed").invoke(appInfo);
+            return Boolean.TRUE.equals(allowed);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @Override public void finish() {
+        super.finish();
+        overridePendingTransition(0, 0);
     }
 }

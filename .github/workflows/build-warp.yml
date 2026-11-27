@@ -1,4 +1,4 @@
-name: Build NOVO Player with Cloudflare WARP
+name: Build NOVO Player with Cloudflare WARP MASQUE
 
 on:
   workflow_dispatch:
@@ -18,12 +18,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@v4.0.4
       - name: Install Android SDK build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+      - name: Build protected MASQUE engine
+        run: ./scripts/build_masque_engine.sh
       - name: Build APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -33,6 +38,6 @@ jobs:
         run: ./scripts/build_github.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: NOVO-PLAYER-WARP-APK
-          path: output/NOVO_PLAYER_3.8_WARP.apk
+          name: NOVO-PLAYER-MASQUE-APK
+          path: output/NOVO_PLAYER_3.8_MASQUE.apk
           if-no-files-found: error
