@@ -9,33 +9,16 @@ AAR_PATH="$ROOT_DIR/warp-addon/app/libs/usque-android.aar"
 GOMOBILE_VERSION="v0.0.0-20251209145715-2553ed8ce294"
 
 rm -rf "$ENGINE_DIR"
-
-download_pinned_archive() {
-    local archive="${RUNNER_TEMP:-/tmp}/usque-android-${ENGINE_REV}.tar.gz"
-    echo "Git clone failed; downloading the pinned source archive instead."
-    rm -rf "$ENGINE_DIR"
-    mkdir -p "$ENGINE_DIR"
-    curl --fail --location --silent --show-error \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 \
-        "https://codeload.github.com/Abobo7/usque-android/tar.gz/${ENGINE_REV}" \
-        --output "$archive"
-    tar -xzf "$archive" -C "$ENGINE_DIR" --strip-components=1
-    rm -f "$archive"
-}
-
-if GIT_TERMINAL_PROMPT=0 git clone --filter=blob:none \
-    https://github.com/Abobo7/usque-android.git "$ENGINE_DIR"; then
-    if ! git -C "$ENGINE_DIR" checkout --detach "$ENGINE_REV"; then
-        download_pinned_archive
-    fi
-else
-    download_pinned_archive
-fi
-
+git clone --filter=blob:none https://github.com/Abobo7/usque-android.git "$ENGINE_DIR"
+git -C "$ENGINE_DIR" checkout --detach "$ENGINE_REV"
 git -C "$ENGINE_DIR" apply --check "$PATCH_FILE"
 git -C "$ENGINE_DIR" apply "$PATCH_FILE"
 
 export GOTOOLCHAIN=local
+# Try the official Go proxy first, then a public mirror, then direct VCS. The
+# pipe separators also fall back on proxy errors such as intermittent 404s.
+export GOPROXY="${GOPROXY:-https://proxy.golang.org|https://goproxy.io|direct}"
+export GOSUMDB="${GOSUMDB:-sum.golang.org}"
 export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [[ -z "$ANDROID_HOME" ]]; then
     echo "ANDROID_HOME/ANDROID_SDK_ROOT is required" >&2
@@ -49,10 +32,13 @@ fi
 
 GOBIN_DIR="$(go env GOPATH)/bin"
 mkdir -p "$GOBIN_DIR" "$(dirname "$AAR_PATH")"
+cd "$ENGINE_DIR"
+# Resolve upstream libraries explicitly so a missing module is reported with
+# its module URL before gomobile starts the Android cross-build.
+go mod download -x
 GOBIN="$GOBIN_DIR" go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
 "$GOBIN_DIR/gomobile" init
 
-cd "$ENGINE_DIR"
 "$GOBIN_DIR/gomobile" bind -v \
     -target=android/arm,android/arm64,android/386,android/amd64 \
     -androidapi 24 \

@@ -1,0 +1,10 @@
+# Local Android and Gradle outputs
+.gradle/
+**/.gradle/
+.build-work/
+**/build/
+output/
+*.apk
+*.idsig
+*.keystore
+local.properties

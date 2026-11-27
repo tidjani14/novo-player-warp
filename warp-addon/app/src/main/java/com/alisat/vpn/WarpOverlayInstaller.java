@@ -67,7 +67,6 @@ public final class WarpOverlayInstaller {
                             | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                             | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                             | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
-                            | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_HIDE_NAVIGATION
                             | android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
                             | android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION;
                     intent.putExtra(WarpActivity.EXTRA_WINDOW_FLAGS,
