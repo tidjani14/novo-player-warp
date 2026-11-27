@@ -2,61 +2,49 @@
 set -Eeuo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-command -v git >/dev/null 2>&1 || { echo "Git is required. Install it first." >&2; exit 2; }
-command -v gh >/dev/null 2>&1 || { echo "GitHub CLI (gh) is required. Install it first." >&2; exit 2; }
-gh auth status >/dev/null 2>&1 || gh auth login
+command -v git >/dev/null 2>&1 || { echo "Install git first: pkg install git" >&2; exit 2; }
+command -v gh  >/dev/null 2>&1 || { echo "Install GitHub CLI first: pkg install gh" >&2; exit 2; }
+
+gh auth status >/dev/null 2>&1 || gh auth login --hostname github.com --git-protocol https --web
 GH_USER="$(gh api user --jq .login)"
-
-# Reuse the project's existing repository when available. This avoids Git's
-# shared-storage limitations when the ZIP is unpacked under Android Downloads.
-REPO=""
-if git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-   && git -C "$SOURCE_DIR" remote get-url origin >/dev/null 2>&1; then
-  REPO="$(cd "$SOURCE_DIR" && gh repo view --json nameWithOwner --jq .nameWithOwner)"
-else
-  REPO_NAME="$(gh repo list "$GH_USER" --limit 100 --json name,createdAt \
-    --jq '[.[] | select((.name == "novo-player-warp") or (.name | startswith("novo-player-warp-")))] | sort_by(.createdAt) | last | .name // empty')"
-  if [[ -n "$REPO_NAME" ]]; then REPO="${GH_USER}/${REPO_NAME}"; fi
-fi
-
+REPO="${GH_USER}/novo-player-warp"
 WORK_DIR="$(mktemp -d "${HOME}/novo-player-warp.XXXXXX")"
-if [[ -n "$REPO" ]]; then
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+if gh repo view "$REPO" >/dev/null 2>&1; then
   echo "Updating existing repository: $REPO"
   gh repo clone "$REPO" "$WORK_DIR"
 else
-  echo "No existing NOVO Player repository found; creating one."
+  echo "Creating private repository: $REPO"
   git -C "$WORK_DIR" init --initial-branch=main
 fi
 
-# Copy the project into Termux's private home folder, excluding any source
-# .git directory so an extracted ZIP cannot overwrite the cloned repository.
+# Copy from Android shared storage into Termux's private home before Git runs.
 shopt -s dotglob nullglob
 for item in "$SOURCE_DIR"/*; do
-  [[ "${item##*/}" == ".git" ]] && continue
+  name="${item##*/}"
+  case "$name" in
+    .git|.gradle|output|.build-work) continue ;;
+  esac
   cp -a "$item" "$WORK_DIR/"
 done
 
-if ! git -C "$WORK_DIR" config user.name >/dev/null 2>&1; then
-  git -C "$WORK_DIR" config user.name "$GH_USER"
-fi
-if ! git -C "$WORK_DIR" config user.email >/dev/null 2>&1; then
-  git -C "$WORK_DIR" config user.email "${GH_USER}@users.noreply.github.com"
-fi
-
+git -C "$WORK_DIR" config user.name "$GH_USER"
+git -C "$WORK_DIR" config user.email "${GH_USER}@users.noreply.github.com"
 git -C "$WORK_DIR" add -A
 if ! git -C "$WORK_DIR" diff --cached --quiet; then
-  git -C "$WORK_DIR" commit -m "Fix NOVO Player WARP build and VPN consent flow"
+  git -C "$WORK_DIR" commit -m "Fix MASQUE dependency download and VPN first-run flow"
 else
-  echo "No file changes to upload."
+  echo "No source changes to upload."
 fi
 
-if [[ -n "$REPO" ]]; then
+if git -C "$WORK_DIR" remote get-url origin >/dev/null 2>&1; then
   git -C "$WORK_DIR" push origin HEAD:main
 else
-  REPO="${GH_USER}/novo-player-warp-$(date -u +%Y%m%d-%H%M%S)"
   gh repo create "$REPO" --private --source "$WORK_DIR" --remote origin --push
 fi
 
 echo
-echo "Uploaded: https://github.com/${REPO}"
-echo "GitHub Actions will rebuild the APK. Open Actions and download NOVO-PLAYER-MASQUE-APK when it finishes."
+echo "Uploaded successfully: https://github.com/${REPO}"
+echo "Build workflow: https://github.com/${REPO}/actions/workflows/build-warp.yml"
+echo "The push should start the build automatically."

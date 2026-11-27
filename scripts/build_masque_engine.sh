@@ -4,21 +4,29 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE_DIR="${RUNNER_TEMP:-/tmp}/novo-usque-android"
 ENGINE_REV="1bc50c004b99e6df42fc17f4f93320d782020dde"
+ENGINE_ARCHIVE="${RUNNER_TEMP:-/tmp}/novo-usque-android-${ENGINE_REV}.tar.gz"
 PATCH_FILE="$ROOT_DIR/warp-addon/third_party/usque-android-socket-protector.patch"
 AAR_PATH="$ROOT_DIR/warp-addon/app/libs/usque-android.aar"
 GOMOBILE_VERSION="v0.0.0-20251209145715-2553ed8ce294"
 
-rm -rf "$ENGINE_DIR"
-git clone --filter=blob:none https://github.com/Abobo7/usque-android.git "$ENGINE_DIR"
-git -C "$ENGINE_DIR" checkout --detach "$ENGINE_REV"
+# Download the exact public source snapshot from codeload. This avoids Git's
+# credential helper prompting for a username in a non-interactive Actions job.
+rm -rf "$ENGINE_DIR" "$ENGINE_ARCHIVE"
+mkdir -p "$ENGINE_DIR"
+curl --fail --location --retry 4 --retry-all-errors --retry-delay 3 \
+    --connect-timeout 30 --max-time 600 \
+    "https://codeload.github.com/Abobo7/usque-android/tar.gz/${ENGINE_REV}" \
+    -o "$ENGINE_ARCHIVE"
+tar -xzf "$ENGINE_ARCHIVE" --strip-components=1 -C "$ENGINE_DIR"
+rm -f "$ENGINE_ARCHIVE"
+[[ -s "$ENGINE_DIR/go.mod" && -d "$ENGINE_DIR/android" ]] || {
+    echo "Pinned Usque source archive is incomplete or the revision is unavailable" >&2
+    exit 2
+}
 git -C "$ENGINE_DIR" apply --check "$PATCH_FILE"
 git -C "$ENGINE_DIR" apply "$PATCH_FILE"
 
 export GOTOOLCHAIN=local
-# Try the official Go proxy first, then a public mirror, then direct VCS. The
-# pipe separators also fall back on proxy errors such as intermittent 404s.
-export GOPROXY="${GOPROXY:-https://proxy.golang.org|https://goproxy.io|direct}"
-export GOSUMDB="${GOSUMDB:-sum.golang.org}"
 export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 if [[ -z "$ANDROID_HOME" ]]; then
     echo "ANDROID_HOME/ANDROID_SDK_ROOT is required" >&2
@@ -32,13 +40,10 @@ fi
 
 GOBIN_DIR="$(go env GOPATH)/bin"
 mkdir -p "$GOBIN_DIR" "$(dirname "$AAR_PATH")"
-cd "$ENGINE_DIR"
-# Resolve upstream libraries explicitly so a missing module is reported with
-# its module URL before gomobile starts the Android cross-build.
-go mod download -x
 GOBIN="$GOBIN_DIR" go install "golang.org/x/mobile/cmd/gomobile@$GOMOBILE_VERSION"
 "$GOBIN_DIR/gomobile" init
 
+cd "$ENGINE_DIR"
 "$GOBIN_DIR/gomobile" bind -v \
     -target=android/arm,android/arm64,android/386,android/amd64 \
     -androidapi 24 \

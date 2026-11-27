@@ -8,11 +8,9 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
-import android.system.Os;
 import android.util.Log;
 
 import java.io.File;
-import java.io.FileDescriptor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -160,21 +158,14 @@ public final class WarpVpnService extends VpnService implements SocketProtector 
         catch (Exception e) { Log.w(TAG, "TUN close failed", e); }
         tun = null;
         if (tunFd >= 0) {
-            try { Os.close(fileDescriptorFromInt(tunFd)); }
-            catch (Exception e) { Log.w(TAG, "Detached TUN close failed", e); }
+            int detachedFd = tunFd;
             tunFd = -1;
+            try { ParcelFileDescriptor.adoptFd(detachedFd).close(); }
+            catch (Exception e) { Log.w(TAG, "Detached TUN close failed", e); }
         }
         if (userRequested) WarpTunnelController.reportDisconnected();
         stopForeground(true);
         stopSelf();
-    }
-
-    private FileDescriptor fileDescriptorFromInt(int value) throws Exception {
-        FileDescriptor descriptor = new FileDescriptor();
-        java.lang.reflect.Field field = FileDescriptor.class.getDeclaredField("descriptor");
-        field.setAccessible(true);
-        field.setInt(descriptor, value);
-        return descriptor;
     }
 
     private void startForegroundCompat() {

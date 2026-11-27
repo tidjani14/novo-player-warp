@@ -3,11 +3,13 @@ package com.alisat.vpn;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
 
 /** Performs the overlay's one-tap connect/disconnect action without opening a screen. */
 public final class WarpActivity extends Activity {
+    private static final String TAG = "NovoWarpActivity";
     public static final String EXTRA_TOGGLE = "com.alisat.vpn.extra.TOGGLE";
     public static final String EXTRA_SYSTEM_UI_FLAGS = "com.alisat.vpn.extra.SYSTEM_UI_FLAGS";
     public static final String EXTRA_WINDOW_FLAGS = "com.alisat.vpn.extra.WINDOW_FLAGS";
@@ -28,6 +30,7 @@ public final class WarpActivity extends Activity {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                         | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_HIDE_NAVIGATION
                         | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
                         | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION;
                 getWindow().addFlags(launch.getIntExtra(EXTRA_WINDOW_FLAGS, 0) & safeFlags);
@@ -48,11 +51,21 @@ public final class WarpActivity extends Activity {
                 controller.disconnect(this::finishOperation);
                 return;
             }
-            // Ask Android for VPN consent before applying the server entitlement
-            // gate. The consent Activity must remain alive to receive its result.
+            if (!isVpnAuthorized()) {
+                Toast.makeText(this,
+                        "WARP is not enabled for this device. Ask the administrator to allow this device MAC.",
+                        Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
+            // Android returns a consent Intent only until the user approves this VPN app.
+            // Do not pre-check resolveActivity(): Android 11+ may hide the system consent UI.
             Intent consent = controller.prepare();
-            if (consent == null) startConnection();
-            else startActivityForResult(consent, VPN_CONSENT_REQUEST);
+            if (consent == null) {
+                startConnection();
+            } else {
+                startActivityForResult(consent, VPN_CONSENT_REQUEST);
+            }
         } catch (RuntimeException error) {
             finishOperation(false, error.getMessage());
         }
@@ -67,11 +80,6 @@ public final class WarpActivity extends Activity {
 
     private void startConnection() {
         try {
-            if (!isVpnAuthorized()) {
-                Toast.makeText(this, "WARP VPN is not enabled for this device", Toast.LENGTH_LONG).show();
-                finish();
-                return;
-            }
             controller.connect(this::finishOperation);
         } catch (RuntimeException error) {
             finishOperation(false, error.getMessage());
@@ -79,7 +87,9 @@ public final class WarpActivity extends Activity {
     }
 
     private void finishOperation(boolean ok, String message) {
-        // Keep connect/disconnect silent; the toggle reflects the resulting state.
+        if (!ok && message != null && !message.trim().isEmpty()) {
+            Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+        }
         finish();
     }
 
@@ -94,7 +104,8 @@ public final class WarpActivity extends Activity {
             if (appInfo == null) return false;
             Object allowed = appInfo.getClass().getMethod("isVpn_allowed").invoke(appInfo);
             return Boolean.TRUE.equals(allowed);
-        } catch (Exception ignored) {
+        } catch (Throwable error) {
+            Log.e(TAG, "Could not read the server-side VPN entitlement", error);
             return false;
         }
     }
