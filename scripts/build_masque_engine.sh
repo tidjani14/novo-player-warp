@@ -9,8 +9,29 @@ AAR_PATH="$ROOT_DIR/warp-addon/app/libs/usque-android.aar"
 GOMOBILE_VERSION="v0.0.0-20251209145715-2553ed8ce294"
 
 rm -rf "$ENGINE_DIR"
-git clone --filter=blob:none https://github.com/Abobo7/usque-android.git "$ENGINE_DIR"
-git -C "$ENGINE_DIR" checkout --detach "$ENGINE_REV"
+
+download_pinned_archive() {
+    local archive="${RUNNER_TEMP:-/tmp}/usque-android-${ENGINE_REV}.tar.gz"
+    echo "Git clone failed; downloading the pinned source archive instead."
+    rm -rf "$ENGINE_DIR"
+    mkdir -p "$ENGINE_DIR"
+    curl --fail --location --silent --show-error \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 \
+        "https://codeload.github.com/Abobo7/usque-android/tar.gz/${ENGINE_REV}" \
+        --output "$archive"
+    tar -xzf "$archive" -C "$ENGINE_DIR" --strip-components=1
+    rm -f "$archive"
+}
+
+if GIT_TERMINAL_PROMPT=0 git clone --filter=blob:none \
+    https://github.com/Abobo7/usque-android.git "$ENGINE_DIR"; then
+    if ! git -C "$ENGINE_DIR" checkout --detach "$ENGINE_REV"; then
+        download_pinned_archive
+    fi
+else
+    download_pinned_archive
+fi
+
 git -C "$ENGINE_DIR" apply --check "$PATCH_FILE"
 git -C "$ENGINE_DIR" apply "$PATCH_FILE"
 
