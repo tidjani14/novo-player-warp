@@ -48,6 +48,10 @@ BASE_DIR="$WORK/base/NOVO_PLAYER_v3.8(40)_base_src"
   echo "The ZIP does not look like the supplied apktool-decoded source" >&2; exit 2;
 }
 
+# Use the existing Realm snapshot immediately. A manual Reload resets the
+# playlist timestamp to zero, and changed Xtream credentials clear Realm.
+python3 "$ROOT/scripts/patch_playlist_cache.py" "$BASE_DIR"
+
 # This source export came from a tool that writes apktool.json; Apktool CLI
 # requires apktool.yml. Convert the metadata before invoking Apktool.
 if [[ ! -f "$BASE_DIR/apktool.yml" ]]; then
