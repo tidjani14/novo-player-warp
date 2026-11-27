@@ -28,14 +28,14 @@ jobs:
       - name: Install Android SDK build tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
       - name: Build protected MASQUE engine
-        run: ./scripts/build_masque_engine.sh
+        run: bash ./scripts/build_masque_engine.sh
       - name: Build APK
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./scripts/build_github.sh
+        run: bash ./scripts/build_github.sh
       - uses: actions/upload-artifact@v4
         with:
           name: NOVO-PLAYER-MASQUE-APK
